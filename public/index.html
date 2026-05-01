@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Minecraft Cameras</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <h1>Public Minecraft Cameras</h1>
+          <p>Watch cameras shared by worlds that are set to public.</p>
+        </div>
+        <form id="worldLookup" class="lookup">
+          <input id="worldIdInput" name="worldId" autocomplete="off" placeholder="Enter world ID">
+          <button type="submit">Open</button>
+        </form>
+      </section>
+
+      <section id="publicCameras" class="camera-grid" aria-live="polite"></section>
+    </main>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
+
