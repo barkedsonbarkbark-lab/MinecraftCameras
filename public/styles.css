@@ -95,6 +95,21 @@ p {
   background: #141414;
 }
 
+.world-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  background: #141414;
+}
+
+.owner-status {
+  margin-left: auto;
+  font-size: 0.95rem;
+}
+
 .lookup,
 .link-panel {
   display: flex;
@@ -329,6 +344,14 @@ small,
   .topbar,
   .lookup {
     display: grid;
+  }
+
+  .world-actions {
+    display: grid;
+  }
+
+  .owner-status {
+    margin-left: 0;
   }
 
   .viewer-layout {

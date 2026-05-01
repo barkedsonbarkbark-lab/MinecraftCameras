@@ -29,6 +29,9 @@ const pitchValue = document.querySelector("#pitchValue");
 const fovValue = document.querySelector("#fovValue");
 const sendControlButton = document.querySelector("#sendControlButton");
 const controlStatus = document.querySelector("#controlStatus");
+const copyWorldLinkButton = document.querySelector("#copyWorldLinkButton");
+const refreshWorldButton = document.querySelector("#refreshWorldButton");
+const ownerStatus = document.querySelector("#ownerStatus");
 
 cameraPovButton.addEventListener("click", () => switchPov("camera"));
 playerPovButton.addEventListener("click", () => switchPov("player"));
@@ -36,6 +39,8 @@ for (const input of [yawInput, pitchInput, fovInput]) {
   input.addEventListener("input", updateControlValues);
 }
 sendControlButton.addEventListener("click", sendControls);
+copyWorldLinkButton.addEventListener("click", copyWorldLink);
+refreshWorldButton.addEventListener("click", () => loadWorld());
 
 shareCodeInput.value = shareCode;
 shareCodeForm.addEventListener("submit", (event) => {
@@ -70,6 +75,7 @@ async function loadWorld() {
     cameras = camerasData.cameras;
     worldName.textContent = worldData.world.name;
     worldMeta.textContent = `${worldData.world.visibility} visibility - ${camerasData.cameras.length} cameras`;
+    ownerStatus.textContent = canControl ? "Linked account can control cameras." : "View-only mode.";
     renderCameras(camerasData.cameras);
     if (!selectedCameraId && camerasData.cameras[0]) selectedCameraId = camerasData.cameras[0].cameraId;
     if (selectedCameraId) joinCamera(selectedCameraId);
@@ -83,7 +89,7 @@ function renderCameras(cameras) {
   cameraList.innerHTML = cameras.map((camera) => `
     <button class="camera-row ${camera.cameraId === selectedCameraId ? "selected" : ""}" data-camera="${escapeHtml(camera.cameraId)}">
       <strong>${escapeHtml(camera.name)}</strong>
-      <span>${escapeHtml(camera.dimension)}</span>
+      <span>${escapeHtml(camera.dimension)}${camera.lastSeenAt ? " - online" : " - idle"}</span>
       <small>${camera.x}, ${camera.y}, ${camera.z} - ${Math.round(camera.yaw)} / ${Math.round(camera.pitch)} / ${Math.round(camera.fov)} FOV</small>
     </button>
   `).join("");
@@ -170,6 +176,23 @@ async function sendControls() {
     controlStatus.textContent = "Sent to Minecraft.";
   } catch (error) {
     controlStatus.textContent = error.message;
+  }
+}
+
+async function copyWorldLink() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("camera");
+  url.searchParams.delete("pov");
+  if (!shareCode) {
+    url.searchParams.delete("code");
+  } else {
+    url.searchParams.set("code", shareCode);
+  }
+  try {
+    await navigator.clipboard.writeText(url.toString());
+    ownerStatus.textContent = "World link copied.";
+  } catch (_error) {
+    ownerStatus.textContent = "Copy failed in this browser.";
   }
 }
 
