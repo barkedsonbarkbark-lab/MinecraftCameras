@@ -8,6 +8,9 @@ let activeRoom = null;
 let cameras = [];
 const accountToken = localStorage.getItem("minecraftcameras.accountToken") || "";
 let canControl = false;
+let hls = null;
+let liveModeActive = false;
+let liveStreamKey = "";
 
 const socket = io();
 const worldName = document.querySelector("#worldName");
@@ -16,6 +19,7 @@ const shareCodeForm = document.querySelector("#shareCodeForm");
 const shareCodeInput = document.querySelector("#shareCodeInput");
 const cameraList = document.querySelector("#cameraList");
 const frame = document.querySelector("#frame");
+const liveVideo = document.querySelector("#liveVideo");
 const emptyState = document.querySelector("#emptyState");
 const viewerMeta = document.querySelector("#viewerMeta");
 const cameraPovButton = document.querySelector("#cameraPovButton");
@@ -50,12 +54,21 @@ shareCodeForm.addEventListener("submit", (event) => {
 });
 
 socket.on("camera:frame", (payload) => {
+  if (liveModeActive) return;
   if (payload.cameraId !== selectedCameraId) return;
   if ((payload.pov || "camera") !== selectedPov) return;
   frame.src = payload.image;
   frame.classList.add("visible");
+  liveVideo.classList.remove("visible");
   emptyState.hidden = true;
   viewerMeta.textContent = `${selectedPov === "camera" ? "Camera POV" : "Player POV"} - ${payload.width}x${payload.height} at ${payload.fps || "?"} FPS target, received ${new Date(payload.receivedAt).toLocaleTimeString()}`;
+});
+
+socket.on("camera:live", (payload) => {
+  if (payload.cameraId !== selectedCameraId) return;
+  if ((payload.pov || "camera") !== selectedPov) return;
+  if (payload.available && liveModeActive) return;
+  refreshPlaybackMode();
 });
 
 async function fetchJson(url) {
@@ -101,11 +114,13 @@ function renderCameras(cameras) {
 
 function joinCamera(cameraId) {
   if (activeRoom) socket.emit("viewer:leave", activeRoom);
+  destroyLivePlayback();
   selectedCameraId = cameraId;
   activeRoom = { worldId, cameraId, pov: selectedPov };
   frame.classList.remove("visible");
+  liveVideo.classList.remove("visible");
   emptyState.hidden = false;
-  emptyState.textContent = "Waiting for camera frames...";
+  emptyState.textContent = "Checking stream...";
   socket.emit("viewer:join", { worldId, cameraId, code: shareCode, accountToken, pov: selectedPov }, (reply) => {
     if (!reply?.ok) emptyState.textContent = reply?.error || "Could not join camera.";
   });
@@ -113,6 +128,7 @@ function joinCamera(cameraId) {
     row.classList.toggle("selected", row.dataset.camera === cameraId);
   }
   loadControlValues();
+  refreshPlaybackMode();
 }
 
 function switchPov(pov) {
@@ -194,6 +210,93 @@ async function copyWorldLink() {
   } catch (_error) {
     ownerStatus.textContent = "Copy failed in this browser.";
   }
+}
+
+async function refreshPlaybackMode() {
+  if (!selectedCameraId) return;
+
+  const query = new URLSearchParams();
+  if (shareCode) query.set("code", shareCode);
+  if (accountToken) query.set("accountToken", accountToken);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+
+  try {
+    const status = await fetchJson(`/api/worlds/${encodeURIComponent(worldId)}/cameras/${encodeURIComponent(selectedCameraId)}/live/status${suffix}`);
+    const liveStream = (status.streams || []).find((stream) => stream.pov === selectedPov);
+    if (liveStream) {
+      await enableLivePlayback(suffix, liveStream);
+      return;
+    }
+  } catch (_error) {
+    // Fall back to frame mode.
+  }
+
+  destroyLivePlayback();
+  liveModeActive = false;
+  emptyState.hidden = false;
+  emptyState.textContent = "Waiting for camera frames...";
+}
+
+async function enableLivePlayback(querySuffix, liveStream) {
+  const streamKey = JSON.stringify({
+    cameraId: selectedCameraId,
+    pov: selectedPov,
+    start: liveStream.startedAt,
+    end: liveStream.sequenceEnd
+  });
+  if (liveModeActive && liveStreamKey === streamKey) return;
+
+  const playlistUrl = `/live/${encodeURIComponent(worldId)}/${encodeURIComponent(selectedCameraId)}/${encodeURIComponent(selectedPov)}/index.m3u8${querySuffix}`;
+  const canUseNativeHls = Boolean(liveVideo.canPlayType("application/vnd.apple.mpegurl"));
+  const canUseHlsJs = Boolean(window.Hls?.isSupported());
+
+  if (!canUseNativeHls && canUseHlsJs) {
+    destroyLivePlayback();
+  }
+
+  liveModeActive = true;
+  liveStreamKey = streamKey;
+  frame.classList.remove("visible");
+  emptyState.hidden = true;
+  viewerMeta.textContent = `${selectedPov === "camera" ? "Camera POV" : "Player POV"} - live HLS stream`;
+
+  if (canUseNativeHls) {
+    liveVideo.src = playlistUrl;
+    liveVideo.classList.add("visible");
+    await liveVideo.play().catch(() => {});
+    return;
+  }
+
+  if (canUseHlsJs) {
+    hls = new window.Hls({
+      lowLatencyMode: true,
+      liveDurationInfinity: true
+    });
+    hls.loadSource(playlistUrl);
+    hls.attachMedia(liveVideo);
+    hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+      liveVideo.classList.add("visible");
+      liveVideo.play().catch(() => {});
+    });
+    return;
+  }
+
+  liveModeActive = false;
+  emptyState.hidden = false;
+  emptyState.textContent = "This browser cannot play HLS here yet.";
+}
+
+function destroyLivePlayback() {
+  liveStreamKey = "";
+  liveModeActive = false;
+  if (hls) {
+    hls.destroy();
+    hls = null;
+  }
+  liveVideo.pause();
+  liveVideo.removeAttribute("src");
+  liveVideo.load();
+  liveVideo.classList.remove("visible");
 }
 
 function escapeHtml(value) {

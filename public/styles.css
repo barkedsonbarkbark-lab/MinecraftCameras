@@ -293,7 +293,20 @@ small,
   background: #050505;
 }
 
+.viewer video {
+  display: none;
+  width: 100%;
+  height: 100%;
+  min-height: 460px;
+  object-fit: contain;
+  background: #050505;
+}
+
 .viewer img.visible {
+  display: block;
+}
+
+.viewer video.visible {
   display: block;
 }
 
@@ -359,7 +372,8 @@ small,
   }
 
   .viewer,
-  .viewer img {
+  .viewer img,
+  .viewer video {
     min-height: 320px;
   }
 }

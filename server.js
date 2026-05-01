@@ -26,6 +26,16 @@ import {
   takeControlCommands
 } from "./db.js";
 import { canViewWorld, makeRoom, normalizePov, normalizeVisibility } from "./lib/access.js";
+import {
+  buildLivePlaylist,
+  endLiveSession,
+  getLiveInitSegment,
+  getLiveSegment,
+  getLiveStatus,
+  saveLiveInitSegment,
+  saveLiveSegment,
+  startLiveSession
+} from "./lib/live.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -58,7 +68,7 @@ function requireWorldSecret(req, res, next) {
 }
 
 function requireOwner(req, res, next) {
-  const token = req.header("x-account-token");
+  const token = extractAccountToken(req);
   if (!canControlWorld(req.params.worldId, token)) {
     return res.status(401).json({ error: "Link this world to your account before controlling cameras." });
   }
@@ -69,11 +79,15 @@ function authorizeViewer(req, res, next) {
   const world = getWorld(req.params.worldId);
   if (!world) return res.status(404).json({ error: "World not found" });
   const shareCode = findShareCode(world.worldId, req.query.code || req.header("x-share-code"));
-  if (!canViewWorld(world, shareCode) && !canControlWorld(world.worldId, req.header("x-account-token"))) {
+  if (!canViewWorld(world, shareCode) && !canControlWorld(world.worldId, extractAccountToken(req))) {
     return res.status(403).json({ error: "This world is not public. A valid share code is required." });
   }
   req.world = world;
   return next();
+}
+
+function extractAccountToken(req) {
+  return req.query.accountToken || req.header("x-account-token");
 }
 
 app.get("/", (_req, res) => {
@@ -167,6 +181,37 @@ app.post("/api/worlds/:worldId/cameras/:cameraId/frame", requireWorldSecret, (re
   res.status(202).json({ frame: { ...frame, image: undefined } });
 });
 
+app.post("/api/worlds/:worldId/cameras/:cameraId/live/session", requireWorldSecret, (req, res) => {
+  const pov = normalizePov(req.body.pov);
+  const session = startLiveSession(req.params.worldId, req.params.cameraId, pov, req.body);
+  io.to(makeRoom(req.params.worldId, req.params.cameraId, pov)).emit("camera:live", { ...session, available: true });
+  res.status(201).json({ stream: session });
+});
+
+app.post("/api/worlds/:worldId/cameras/:cameraId/live/init", requireWorldSecret, (req, res) => {
+  const pov = normalizePov(req.body.pov);
+  if (!req.body.data) return res.status(400).json({ error: "Base64 init segment data is required" });
+  const session = saveLiveInitSegment(req.params.worldId, req.params.cameraId, pov, req.body);
+  io.to(makeRoom(req.params.worldId, req.params.cameraId, pov)).emit("camera:live", { ...session, available: true });
+  res.status(202).json({ stream: session });
+});
+
+app.post("/api/worlds/:worldId/cameras/:cameraId/live/segment", requireWorldSecret, (req, res) => {
+  const pov = normalizePov(req.body.pov);
+  if (!req.body.data) return res.status(400).json({ error: "Base64 segment data is required" });
+  const session = saveLiveSegment(req.params.worldId, req.params.cameraId, pov, req.body);
+  io.to(makeRoom(req.params.worldId, req.params.cameraId, pov)).emit("camera:live", { ...session, available: true });
+  res.status(202).json({ stream: session });
+});
+
+app.post("/api/worlds/:worldId/cameras/:cameraId/live/end", requireWorldSecret, (req, res) => {
+  const pov = normalizePov(req.body.pov);
+  const session = endLiveSession(req.params.worldId, req.params.cameraId, pov);
+  if (!session) return res.status(404).json({ error: "Live session not found" });
+  io.to(makeRoom(req.params.worldId, req.params.cameraId, pov)).emit("camera:live", { ...session, available: false });
+  res.json({ stream: session });
+});
+
 app.post("/api/worlds/:worldId/cameras/:cameraId/control", requireOwner, (req, res) => {
   const command = saveControlCommand(req.params.worldId, req.params.cameraId, req.body);
   if (!command) return res.status(404).json({ error: "Camera not found" });
@@ -178,10 +223,35 @@ app.get("/api/worlds/:worldId/control-commands", requireWorldSecret, (req, res) 
   res.json({ commands: takeControlCommands(req.params.worldId) });
 });
 
+app.get("/api/worlds/:worldId/cameras/:cameraId/live/status", authorizeViewer, (req, res) => {
+  res.json(getLiveStatus(req.params.worldId, req.params.cameraId));
+});
+
 app.get("/api/worlds/:worldId/cameras/:cameraId/frame", authorizeViewer, (req, res) => {
   const frame = getFrame(req.params.worldId, req.params.cameraId, normalizePov(req.query.pov));
   if (!frame) return res.status(404).json({ error: "No frame has been received for this camera yet" });
   res.json({ frame });
+});
+
+app.get("/live/:worldId/:cameraId/:pov/index.m3u8", authorizeViewer, (req, res) => {
+  const playlist = buildLivePlaylist(req.params.worldId, req.params.cameraId, normalizePov(req.params.pov), {
+    code: req.query.code,
+    accountToken: req.query.accountToken
+  });
+  if (!playlist) return res.status(404).type("text/plain").send("No live playlist available");
+  res.type("application/vnd.apple.mpegurl").send(playlist);
+});
+
+app.get("/live/:worldId/:cameraId/:pov/init.mp4", authorizeViewer, (req, res) => {
+  const initSegment = getLiveInitSegment(req.params.worldId, req.params.cameraId, normalizePov(req.params.pov));
+  if (!initSegment) return res.status(404).type("text/plain").send("No init segment available");
+  res.type(initSegment.mimeType || "video/mp4").send(initSegment.data);
+});
+
+app.get("/live/:worldId/:cameraId/:pov/segment-:sequence.m4s", authorizeViewer, (req, res) => {
+  const segment = getLiveSegment(req.params.worldId, req.params.cameraId, normalizePov(req.params.pov), req.params.sequence);
+  if (!segment) return res.status(404).type("text/plain").send("No segment available");
+  res.type(segment.mimeType || "video/mp4").send(segment.data);
 });
 
 io.on("connection", (socket) => {
@@ -198,6 +268,9 @@ io.on("connection", (socket) => {
     socket.join(room);
     const latest = getFrame(world.worldId, String(cameraId || ""), normalizedPov);
     if (latest) socket.emit("camera:frame", latest);
+    const liveStatus = getLiveStatus(world.worldId, String(cameraId || ""));
+    const liveStream = liveStatus.streams.find((stream) => stream.pov === normalizedPov);
+    if (liveStream) socket.emit("camera:live", { ...liveStream, available: true });
     reply?.({ ok: true });
   });
 
