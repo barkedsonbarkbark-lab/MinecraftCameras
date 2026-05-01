@@ -1,14 +1,16 @@
 :root {
   color-scheme: dark;
-  --bg: #10140f;
-  --panel: #182016;
-  --panel-2: #20291d;
-  --text: #eef5e8;
-  --muted: #b7c4ae;
-  --line: #35422f;
-  --accent: #8ccf5f;
-  --accent-2: #54a7c7;
-  --danger: #f08d79;
+  --bg: #101010;
+  --paper: #d7d1bc;
+  --panel: #1c1c1c;
+  --panel-2: #262626;
+  --text: #f4f0df;
+  --ink: #191919;
+  --muted: #c6bea4;
+  --line: #5f5948;
+  --accent: #70b84a;
+  --accent-2: #d8b65a;
+  --danger: #cb5a49;
 }
 
 * {
@@ -18,34 +20,65 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background: var(--bg);
   color: var(--text);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: Verdana, Geneva, Tahoma, sans-serif;
+  background:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.03) 25%, transparent 25% 75%, rgba(255, 255, 255, 0.03) 75%),
+    linear-gradient(45deg, rgba(0, 0, 0, 0.18) 25%, transparent 25% 75%, rgba(0, 0, 0, 0.18) 75%),
+    #2a2a2a;
+  background-position: 0 0, 12px 12px;
+  background-size: 24px 24px;
 }
 
 a {
-  color: inherit;
+  color: var(--accent-2);
 }
 
 .shell {
-  width: min(1180px, calc(100% - 32px));
-  margin: 0 auto;
-  padding: 32px 0;
+  width: min(1120px, calc(100% - 28px));
+  margin: 18px auto;
+  padding: 14px;
+  border: 2px solid #000;
+  outline: 1px solid var(--line);
+  background: rgba(16, 16, 16, 0.94);
+  box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.38);
+}
+
+.shell.narrow {
+  width: min(720px, calc(100% - 28px));
 }
 
 .topbar {
   display: flex;
   justify-content: space-between;
-  gap: 24px;
+  gap: 20px;
   align-items: end;
-  padding-bottom: 28px;
-  border-bottom: 1px solid var(--line);
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.topbar.stacked {
+  display: block;
+}
+
+h1,
+h2 {
+  margin: 0 0 8px;
+  font-family: Georgia, "Times New Roman", serif;
+  letter-spacing: 0;
 }
 
 h1 {
-  margin: 0 0 8px;
-  font-size: clamp(2rem, 4vw, 4.5rem);
-  line-height: 0.98;
+  color: var(--accent);
+  font-size: clamp(2rem, 4vw, 4rem);
+  line-height: 1;
+  text-shadow: 2px 2px 0 #000;
+}
+
+h2 {
+  color: var(--accent-2);
+  font-size: 1.35rem;
 }
 
 p {
@@ -53,63 +86,107 @@ p {
   color: var(--muted);
 }
 
-.lookup {
+.nav-actions {
+  display: flex;
+  gap: 12px;
+  margin: 14px 0 0;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  background: #141414;
+}
+
+.lookup,
+.link-panel {
   display: flex;
   gap: 8px;
+}
+
+.lookup {
   min-width: min(420px, 100%);
 }
 
-input,
-button {
+.link-panel {
+  display: grid;
+  margin-top: 14px;
+  padding: 14px;
   border: 1px solid var(--line);
   background: var(--panel);
-  color: var(--text);
-  border-radius: 8px;
-  padding: 12px 14px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+input,
+button,
+output {
+  border: 2px solid #050505;
+  background: var(--paper);
+  color: var(--ink);
+  border-radius: 0;
+  padding: 10px 12px;
   font: inherit;
 }
 
 button {
   cursor: pointer;
   background: var(--accent);
-  color: #10200b;
   font-weight: 700;
+  box-shadow: inset -2px -2px 0 rgba(0, 0, 0, 0.28), inset 2px 2px 0 rgba(255, 255, 255, 0.28);
 }
 
+button:hover,
+.world-card:hover,
+.camera-row:hover {
+  filter: brightness(1.08);
+}
+
+.world-grid,
 .camera-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 14px;
-  margin-top: 24px;
+  gap: 12px;
+  margin-top: 14px;
 }
 
+.world-grid.compact {
+  grid-template-columns: 1fr;
+}
+
+.world-card,
 .camera-card,
 .notice,
-.camera-row {
+.camera-row,
+.control-panel {
   border: 1px solid var(--line);
   background: var(--panel);
-  border-radius: 8px;
 }
 
+.world-card,
 .camera-card {
   position: relative;
   display: grid;
   gap: 8px;
-  padding: 18px;
+  padding: 16px;
+  color: var(--text);
   text-decoration: none;
 }
 
-.camera-card:hover {
-  border-color: var(--accent);
+.world-card strong,
+.camera-card strong {
+  color: var(--accent);
 }
 
 .status {
   position: absolute;
-  right: 14px;
-  top: 14px;
+  right: 12px;
+  top: 12px;
   width: 10px;
   height: 10px;
-  border-radius: 999px;
+  border: 1px solid #000;
   background: var(--danger);
 }
 
@@ -118,34 +195,34 @@ button {
 }
 
 small,
+.world-card span,
 .camera-card span,
 .camera-row span {
   color: var(--muted);
 }
 
 .notice {
-  padding: 20px;
+  padding: 18px;
   color: var(--muted);
 }
 
 .back-link {
   display: inline-block;
-  color: var(--accent);
   margin-bottom: 12px;
   text-decoration: none;
 }
 
 .viewer-layout {
   display: grid;
-  grid-template-columns: 280px 1fr;
-  gap: 18px;
-  margin-top: 24px;
+  grid-template-columns: 260px minmax(0, 1fr) 240px;
+  gap: 12px;
+  margin-top: 14px;
 }
 
 .camera-list {
   display: grid;
   align-content: start;
-  gap: 10px;
+  gap: 8px;
 }
 
 .camera-row {
@@ -164,10 +241,32 @@ small,
 .viewer {
   position: relative;
   min-height: 460px;
-  border: 1px solid var(--line);
-  background: #050704;
-  border-radius: 8px;
+  border: 2px solid #000;
+  outline: 1px solid var(--line);
+  background: #050505;
   overflow: hidden;
+}
+
+.pov-switch {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  background: rgba(5, 5, 5, 0.86);
+}
+
+.pov-switch button {
+  padding: 7px 9px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.pov-switch button.selected {
+  background: var(--accent-2);
 }
 
 .viewer img {
@@ -176,7 +275,7 @@ small,
   height: 100%;
   min-height: 460px;
   object-fit: contain;
-  background: #050704;
+  background: #050505;
 }
 
 .viewer img.visible {
@@ -195,17 +294,38 @@ small,
 
 .viewer-meta {
   position: absolute;
-  left: 12px;
-  bottom: 12px;
-  right: 12px;
+  left: 10px;
+  bottom: 10px;
+  right: 10px;
   color: var(--muted);
-  background: rgba(5, 7, 4, 0.76);
+  background: rgba(5, 5, 5, 0.82);
   padding: 8px 10px;
-  border-radius: 6px;
   font-size: 0.9rem;
 }
 
-@media (max-width: 780px) {
+.control-panel {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 14px;
+}
+
+.control-panel[hidden] {
+  display: none;
+}
+
+.control-panel input {
+  width: 100%;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.control-panel output {
+  display: block;
+  padding: 6px 8px;
+}
+
+@media (max-width: 900px) {
   .topbar,
   .lookup {
     display: grid;
@@ -217,7 +337,6 @@ small,
 
   .viewer,
   .viewer img {
-    min-height: 300px;
+    min-height: 320px;
   }
 }
-

@@ -1,4 +1,4 @@
-const container = document.querySelector("#publicCameras");
+const container = document.querySelector("#publicWorlds");
 const lookup = document.querySelector("#worldLookup");
 const worldInput = document.querySelector("#worldIdInput");
 
@@ -16,23 +16,23 @@ function formatTime(value) {
   }).format(new Date(value));
 }
 
-async function loadPublicCameras() {
-  const response = await fetch("/api/public-cameras");
+async function loadPublicWorlds() {
+  const response = await fetch("/api/public-worlds");
   const data = await response.json();
-  const cameras = data.cameras || [];
+  const worlds = data.worlds || [];
 
-  if (cameras.length === 0) {
-    container.innerHTML = `<div class="notice">No public cameras are online yet.</div>`;
+  if (worlds.length === 0) {
+    container.innerHTML = `<div class="notice">No public worlds are online yet.</div>`;
     return;
   }
 
-  container.innerHTML = cameras.map((camera) => `
-    <a class="camera-card" href="/world/${encodeURIComponent(camera.worldId)}?camera=${encodeURIComponent(camera.cameraId)}">
-      <span class="status ${camera.lastFrameAt ? "online" : ""}"></span>
-      <strong>${escapeHtml(camera.cameraName)}</strong>
-      <span>${escapeHtml(camera.worldName)}</span>
-      <small>${escapeHtml(camera.dimension)} (${camera.x}, ${camera.y}, ${camera.z})</small>
-      <small>Last frame: ${formatTime(camera.lastFrameAt)}</small>
+  container.innerHTML = worlds.map((world) => `
+    <a class="world-card" href="/world/${encodeURIComponent(world.worldId)}">
+      <span class="status ${world.lastFrameAt ? "online" : ""}"></span>
+      <strong>${escapeHtml(world.worldName)}</strong>
+      <span>${world.cameraCount} camera${world.cameraCount === 1 ? "" : "s"}</span>
+      <small>World ID: ${escapeHtml(world.worldId)}</small>
+      <small>Last frame: ${formatTime(world.lastFrameAt)}</small>
     </a>
   `).join("");
 }
@@ -47,7 +47,6 @@ function escapeHtml(value) {
   }[char]));
 }
 
-loadPublicCameras().catch((error) => {
-  container.innerHTML = `<div class="notice">Could not load public cameras: ${escapeHtml(error.message)}</div>`;
+loadPublicWorlds().catch((error) => {
+  container.innerHTML = `<div class="notice">Could not load public worlds: ${escapeHtml(error.message)}</div>`;
 });
-

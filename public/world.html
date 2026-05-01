@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Minecraft Camera World</title>
+    <title>MinecraftCameras World</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <main class="shell">
       <section class="topbar">
         <div>
-          <a class="back-link" href="/">Back to public cameras</a>
+          <a class="back-link" href="/">Back to public worlds</a>
           <h1 id="worldName">World</h1>
           <p id="worldMeta">Loading cameras...</p>
         </div>
@@ -23,14 +23,37 @@
       <section class="viewer-layout">
         <aside id="cameraList" class="camera-list"></aside>
         <section class="viewer">
+          <div class="pov-switch" role="group" aria-label="POV">
+            <button id="cameraPovButton" class="selected" type="button">Camera POV</button>
+            <button id="playerPovButton" type="button">Player POV</button>
+          </div>
           <img id="frame" alt="Selected camera frame">
           <div id="emptyState" class="empty-state">Select a camera to start watching.</div>
           <div id="viewerMeta" class="viewer-meta"></div>
         </section>
+        <aside id="controlPanel" class="control-panel" hidden>
+          <h2>Controls</h2>
+          <label>
+            <span>Yaw</span>
+            <input id="yawInput" type="range" min="-180" max="180" step="1">
+            <output id="yawValue"></output>
+          </label>
+          <label>
+            <span>Pitch</span>
+            <input id="pitchInput" type="range" min="-90" max="90" step="1">
+            <output id="pitchValue"></output>
+          </label>
+          <label>
+            <span>FOV</span>
+            <input id="fovInput" type="range" min="30" max="110" step="1">
+            <output id="fovValue"></output>
+          </label>
+          <button id="sendControlButton" type="button">Send</button>
+          <p id="controlStatus"></p>
+        </aside>
       </section>
     </main>
     <script src="/socket.io/socket.io.js"></script>
     <script src="/world.js" type="module"></script>
   </body>
 </html>
-

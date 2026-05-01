@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Link MinecraftCameras</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell narrow">
+      <section class="topbar stacked">
+        <div>
+          <a class="back-link" href="/">Back to public worlds</a>
+          <h1>Link</h1>
+          <p>Run /camera link in Minecraft, then enter the code here.</p>
+        </div>
+      </section>
+
+      <form id="linkForm" class="link-panel">
+        <label>
+          <span>Name</span>
+          <input id="displayNameInput" autocomplete="name" placeholder="Your name">
+        </label>
+        <label>
+          <span>Code</span>
+          <input id="linkCodeInput" autocomplete="one-time-code" placeholder="ABC123" required>
+        </label>
+        <button type="submit">Link world</button>
+        <p id="linkStatus"></p>
+      </form>
+
+      <section id="accountWorlds" class="world-grid compact"></section>
+    </main>
+    <script src="/link.js" type="module"></script>
+  </body>
+</html>

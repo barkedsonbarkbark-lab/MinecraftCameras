@@ -45,6 +45,43 @@ CREATE TABLE IF NOT EXISTS share_codes (
   FOREIGN KEY (world_id) REFERENCES worlds(world_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS accounts (
+  account_id TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  token TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS world_links (
+  world_id TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  linked_at TEXT NOT NULL,
+  PRIMARY KEY (world_id, account_id),
+  FOREIGN KEY (world_id) REFERENCES worlds(world_id) ON DELETE CASCADE,
+  FOREIGN KEY (account_id) REFERENCES accounts(account_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS link_codes (
+  code TEXT PRIMARY KEY,
+  world_id TEXT NOT NULL,
+  world_secret TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  used_at TEXT,
+  FOREIGN KEY (world_id) REFERENCES worlds(world_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS control_commands (
+  command_id TEXT PRIMARY KEY,
+  world_id TEXT NOT NULL,
+  camera_id TEXT NOT NULL,
+  yaw REAL NOT NULL,
+  pitch REAL NOT NULL,
+  fov REAL NOT NULL,
+  created_at TEXT NOT NULL,
+  applied_at TEXT,
+  FOREIGN KEY (world_id, camera_id) REFERENCES cameras(world_id, camera_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS frames (
   world_id TEXT NOT NULL,
   camera_id TEXT NOT NULL,
@@ -55,6 +92,20 @@ CREATE TABLE IF NOT EXISTS frames (
   captured_at TEXT NOT NULL,
   received_at TEXT NOT NULL,
   PRIMARY KEY (world_id, camera_id),
+  FOREIGN KEY (world_id, camera_id) REFERENCES cameras(world_id, camera_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS frames_v2 (
+  world_id TEXT NOT NULL,
+  camera_id TEXT NOT NULL,
+  pov TEXT NOT NULL DEFAULT 'camera',
+  image TEXT NOT NULL,
+  width INTEGER NOT NULL,
+  height INTEGER NOT NULL,
+  fps REAL,
+  captured_at TEXT NOT NULL,
+  received_at TEXT NOT NULL,
+  PRIMARY KEY (world_id, camera_id, pov),
   FOREIGN KEY (world_id, camera_id) REFERENCES cameras(world_id, camera_id) ON DELETE CASCADE
 );
 `);
@@ -96,8 +147,10 @@ export function registerWorld(payload) {
 
   const tx = db.transaction(() => {
     upsertWorld.run({ worldId, name, visibility, secret, updatedAt: now });
+    const seenCameraIds = new Set();
     for (const camera of payload.cameras || []) {
       if (!camera.cameraId) continue;
+      seenCameraIds.add(String(camera.cameraId));
       upsertCamera.run({
         cameraId: String(camera.cameraId),
         worldId,
@@ -113,9 +166,27 @@ export function registerWorld(payload) {
         lastSeenAt: now
       });
     }
+    const existing = db.prepare("SELECT camera_id AS cameraId FROM cameras WHERE world_id = ?").all(worldId);
+    const removeCamera = db.prepare("DELETE FROM cameras WHERE world_id = ? AND camera_id = ?");
+    for (const camera of existing) {
+      if (!seenCameraIds.has(camera.cameraId)) {
+        removeCamera.run(worldId, camera.cameraId);
+      }
+    }
   });
   tx();
   return getWorld(worldId);
+}
+
+const migrationColumns = [
+  ["frames_v2", "pov", "TEXT NOT NULL DEFAULT 'camera'"]
+];
+
+for (const [table, column, definition] of migrationColumns) {
+  const exists = db.prepare(`PRAGMA table_info(${table})`).all().some((row) => row.name === column);
+  if (!exists) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
 }
 
 export function getWorld(worldId) {
@@ -143,14 +214,139 @@ export function listPublicCameras() {
     SELECT w.world_id AS worldId, w.name AS worldName, w.visibility,
       c.camera_id AS cameraId, c.name AS cameraName, c.dimension, c.x, c.y, c.z,
       c.enabled = 1 AS enabled, c.last_seen_at AS lastSeenAt,
-      f.received_at AS lastFrameAt, f.width, f.height, f.fps
+      f.lastFrameAt, f.width, f.height, f.fps
     FROM worlds w
     JOIN cameras c ON c.world_id = w.world_id
-    LEFT JOIN frames f ON f.world_id = c.world_id AND f.camera_id = c.camera_id
+    LEFT JOIN (
+      SELECT world_id, camera_id, MAX(received_at) AS lastFrameAt, width, height, fps
+      FROM frames_v2
+      GROUP BY world_id, camera_id
+    ) f ON f.world_id = c.world_id AND f.camera_id = c.camera_id
     WHERE w.visibility = 'public' AND c.enabled = 1
-    ORDER BY COALESCE(f.received_at, c.last_seen_at) DESC
+    ORDER BY COALESCE(f.lastFrameAt, c.last_seen_at) DESC
     LIMIT 200
   `).all();
+}
+
+export function listPublicWorlds() {
+  return db.prepare(`
+    SELECT w.world_id AS worldId, w.name AS worldName, w.visibility, w.updated_at AS updatedAt,
+      COUNT(c.camera_id) AS cameraCount,
+      MAX(f.received_at) AS lastFrameAt,
+      MAX(c.last_seen_at) AS lastSeenAt
+    FROM worlds w
+    LEFT JOIN cameras c ON c.world_id = w.world_id AND c.enabled = 1
+    LEFT JOIN frames_v2 f ON f.world_id = c.world_id AND f.camera_id = c.camera_id
+    WHERE w.visibility = 'public'
+    GROUP BY w.world_id
+    ORDER BY COALESCE(MAX(f.received_at), MAX(c.last_seen_at), w.updated_at) DESC
+    LIMIT 100
+  `).all();
+}
+
+export function createLinkCode(worldId, worldSecret) {
+  const code = crypto.randomBytes(5).toString("base64url").toUpperCase();
+  db.prepare(`
+    INSERT INTO link_codes (code, world_id, world_secret, created_at)
+    VALUES (?, ?, ?, ?)
+  `).run(code, worldId, worldSecret, new Date().toISOString());
+  return { code, worldId };
+}
+
+export function redeemLinkCode(code, displayName) {
+  const normalized = String(code || "").trim().toUpperCase();
+  const link = db.prepare(`
+    SELECT code, world_id AS worldId, world_secret AS worldSecret
+    FROM link_codes
+    WHERE code = ? AND used_at IS NULL
+  `).get(normalized);
+  if (!link) return null;
+
+  const now = new Date().toISOString();
+  const account = createAccount(displayName);
+  const tx = db.transaction(() => {
+    db.prepare("UPDATE link_codes SET used_at = ? WHERE code = ?").run(now, normalized);
+    db.prepare(`
+      INSERT OR IGNORE INTO world_links (world_id, account_id, linked_at)
+      VALUES (?, ?, ?)
+    `).run(link.worldId, account.accountId, now);
+  });
+  tx();
+  return { account, worldId: link.worldId };
+}
+
+export function getAccountByToken(token) {
+  if (!token) return null;
+  return db.prepare(`
+    SELECT account_id AS accountId, display_name AS displayName, token, created_at AS createdAt
+    FROM accounts
+    WHERE token = ?
+  `).get(token);
+}
+
+export function canControlWorld(worldId, token) {
+  const account = getAccountByToken(token);
+  if (!account) return false;
+  const link = db.prepare(`
+    SELECT 1 FROM world_links
+    WHERE world_id = ? AND account_id = ?
+  `).get(worldId, account.accountId);
+  return Boolean(link);
+}
+
+export function listAccountWorlds(token) {
+  const account = getAccountByToken(token);
+  if (!account) return [];
+  return db.prepare(`
+    SELECT w.world_id AS worldId, w.name AS worldName, w.visibility, w.updated_at AS updatedAt,
+      COUNT(c.camera_id) AS cameraCount,
+      MAX(f.received_at) AS lastFrameAt
+    FROM world_links wl
+    JOIN worlds w ON w.world_id = wl.world_id
+    LEFT JOIN cameras c ON c.world_id = w.world_id
+    LEFT JOIN frames_v2 f ON f.world_id = c.world_id AND f.camera_id = c.camera_id
+    WHERE wl.account_id = ?
+    GROUP BY w.world_id
+    ORDER BY w.updated_at DESC
+  `).all(account.accountId);
+}
+
+export function saveControlCommand(worldId, cameraId, control) {
+  const camera = db.prepare("SELECT camera_id AS cameraId FROM cameras WHERE world_id = ? AND camera_id = ?").get(worldId, cameraId);
+  if (!camera) return null;
+  const yaw = clamp(Number(control.yaw ?? 0), -180, 180);
+  const pitch = clamp(Number(control.pitch ?? 0), -90, 90);
+  const fov = clamp(Number(control.fov ?? 70), 30, 110);
+  const commandId = crypto.randomUUID();
+  const createdAt = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO control_commands (command_id, world_id, camera_id, yaw, pitch, fov, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(commandId, worldId, cameraId, yaw, pitch, fov, createdAt);
+  db.prepare(`
+    UPDATE cameras SET yaw = ?, pitch = ?, fov = ?, last_seen_at = ?
+    WHERE world_id = ? AND camera_id = ?
+  `).run(yaw, pitch, fov, createdAt, worldId, cameraId);
+  return { commandId, worldId, cameraId, yaw, pitch, fov, createdAt };
+}
+
+export function takeControlCommands(worldId) {
+  const now = new Date().toISOString();
+  const commands = db.prepare(`
+    SELECT command_id AS commandId, camera_id AS cameraId, yaw, pitch, fov, created_at AS createdAt
+    FROM control_commands
+    WHERE world_id = ? AND applied_at IS NULL
+    ORDER BY created_at ASC
+    LIMIT 50
+  `).all(worldId);
+  if (commands.length > 0) {
+    const mark = db.prepare("UPDATE control_commands SET applied_at = ? WHERE command_id = ?");
+    const tx = db.transaction(() => {
+      for (const command of commands) mark.run(now, command.commandId);
+    });
+    tx();
+  }
+  return commands;
 }
 
 export function createShareCode(worldId) {
@@ -191,27 +387,49 @@ export function findShareCode(worldId, code) {
 export function saveFrame(worldId, cameraId, frame) {
   const now = new Date().toISOString();
   const capturedAt = frame.capturedAt || now;
+  const pov = frame.pov === "player" ? "player" : "camera";
   db.prepare(`
-    INSERT INTO frames (world_id, camera_id, image, width, height, fps, captured_at, received_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(world_id, camera_id) DO UPDATE SET
+    INSERT INTO frames_v2 (world_id, camera_id, pov, image, width, height, fps, captured_at, received_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(world_id, camera_id, pov) DO UPDATE SET
       image = excluded.image,
       width = excluded.width,
       height = excluded.height,
       fps = excluded.fps,
       captured_at = excluded.captured_at,
       received_at = excluded.received_at
-  `).run(worldId, cameraId, frame.image, frame.width, frame.height, frame.fps ?? null, capturedAt, now);
+  `).run(worldId, cameraId, pov, frame.image, frame.width, frame.height, frame.fps ?? null, capturedAt, now);
 
   db.prepare("UPDATE cameras SET last_seen_at = ? WHERE world_id = ? AND camera_id = ?").run(now, worldId, cameraId);
-  return getFrame(worldId, cameraId);
+  return getFrame(worldId, cameraId, pov);
 }
 
-export function getFrame(worldId, cameraId) {
+export function getFrame(worldId, cameraId, pov = "camera") {
+  const normalizedPov = pov === "player" ? "player" : "camera";
   return db.prepare(`
-    SELECT world_id AS worldId, camera_id AS cameraId, image, width, height, fps,
+    SELECT world_id AS worldId, camera_id AS cameraId, pov, image, width, height, fps,
       captured_at AS capturedAt, received_at AS receivedAt
-    FROM frames
-    WHERE world_id = ? AND camera_id = ?
-  `).get(worldId, cameraId);
+    FROM frames_v2
+    WHERE world_id = ? AND camera_id = ? AND pov = ?
+  `).get(worldId, cameraId, normalizedPov);
+}
+
+function createAccount(displayName) {
+  const now = new Date().toISOString();
+  const account = {
+    accountId: crypto.randomUUID(),
+    displayName: String(displayName || "Minecraft Player").trim().slice(0, 32) || "Minecraft Player",
+    token: crypto.randomBytes(32).toString("base64url"),
+    createdAt: now
+  };
+  db.prepare(`
+    INSERT INTO accounts (account_id, display_name, token, created_at)
+    VALUES (?, ?, ?, ?)
+  `).run(account.accountId, account.displayName, account.token, account.createdAt);
+  return account;
+}
+
+function clamp(value, min, max) {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, value));
 }

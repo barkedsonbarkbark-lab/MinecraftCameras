@@ -6,19 +6,26 @@ import cors from "cors";
 import helmet from "helmet";
 import { Server } from "socket.io";
 import {
+  canControlWorld,
+  createLinkCode,
   createShareCode,
   findShareCodeById,
   findShareCode,
   getFrame,
   getWorld,
+  listAccountWorlds,
   listCameras,
   listPublicCameras,
+  listPublicWorlds,
   registerWorld,
+  redeemLinkCode,
   revokeShareCode,
   saveFrame,
-  setVisibility
+  saveControlCommand,
+  setVisibility,
+  takeControlCommands
 } from "./db.js";
-import { canViewWorld, makeRoom, normalizeVisibility } from "./lib/access.js";
+import { canViewWorld, makeRoom, normalizePov, normalizeVisibility } from "./lib/access.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -50,11 +57,19 @@ function requireWorldSecret(req, res, next) {
   return next();
 }
 
+function requireOwner(req, res, next) {
+  const token = req.header("x-account-token");
+  if (!canControlWorld(req.params.worldId, token)) {
+    return res.status(401).json({ error: "Link this world to your account before controlling cameras." });
+  }
+  return next();
+}
+
 function authorizeViewer(req, res, next) {
   const world = getWorld(req.params.worldId);
   if (!world) return res.status(404).json({ error: "World not found" });
   const shareCode = findShareCode(world.worldId, req.query.code || req.header("x-share-code"));
-  if (!canViewWorld(world, shareCode)) {
+  if (!canViewWorld(world, shareCode) && !canControlWorld(world.worldId, req.header("x-account-token"))) {
     return res.status(403).json({ error: "This world is not public. A valid share code is required." });
   }
   req.world = world;
@@ -69,8 +84,30 @@ app.get("/world/:worldId", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "world.html"));
 });
 
+app.get("/link", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "link.html"));
+});
+
+app.get("/login", (_req, res) => {
+  res.redirect("/link");
+});
+
 app.get("/api/public-cameras", (_req, res) => {
   res.json({ cameras: listPublicCameras() });
+});
+
+app.get("/api/public-worlds", (_req, res) => {
+  res.json({ worlds: listPublicWorlds() });
+});
+
+app.get("/api/account/worlds", (req, res) => {
+  res.json({ worlds: listAccountWorlds(req.header("x-account-token")) });
+});
+
+app.post("/api/link-codes/redeem", (req, res) => {
+  const result = redeemLinkCode(req.body.code, req.body.displayName);
+  if (!result) return res.status(404).json({ error: "That link code was not found or was already used." });
+  res.status(201).json(result);
 });
 
 app.post("/api/worlds/register", (req, res) => {
@@ -99,6 +136,10 @@ app.post("/api/worlds/:worldId/share-codes", requireWorldSecret, (req, res) => {
   res.status(201).json({ shareCode: createShareCode(req.params.worldId) });
 });
 
+app.post("/api/worlds/:worldId/link-codes", requireWorldSecret, (req, res) => {
+  res.status(201).json({ linkCode: createLinkCode(req.params.worldId, req.world.secret) });
+});
+
 app.delete("/api/share-codes/:codeId", (req, res) => {
   const shareCode = findShareCodeById(req.params.codeId);
   if (!shareCode) return res.status(404).json({ error: "Share code not found" });
@@ -114,6 +155,7 @@ app.post("/api/worlds/:worldId/cameras/:cameraId/frame", requireWorldSecret, (re
   }
 
   const frame = saveFrame(req.params.worldId, req.params.cameraId, {
+    pov: normalizePov(req.body.pov),
     image: String(req.body.image),
     width: Number.parseInt(req.body.width ?? 0, 10),
     height: Number.parseInt(req.body.height ?? 0, 10),
@@ -121,34 +163,46 @@ app.post("/api/worlds/:worldId/cameras/:cameraId/frame", requireWorldSecret, (re
     capturedAt: req.body.capturedAt
   });
 
-  io.to(makeRoom(req.params.worldId, req.params.cameraId)).emit("camera:frame", frame);
+  io.to(makeRoom(req.params.worldId, req.params.cameraId, frame.pov)).emit("camera:frame", frame);
   res.status(202).json({ frame: { ...frame, image: undefined } });
 });
 
+app.post("/api/worlds/:worldId/cameras/:cameraId/control", requireOwner, (req, res) => {
+  const command = saveControlCommand(req.params.worldId, req.params.cameraId, req.body);
+  if (!command) return res.status(404).json({ error: "Camera not found" });
+  io.to(`world:${req.params.worldId}`).emit("camera:control", command);
+  res.status(202).json({ command });
+});
+
+app.get("/api/worlds/:worldId/control-commands", requireWorldSecret, (req, res) => {
+  res.json({ commands: takeControlCommands(req.params.worldId) });
+});
+
 app.get("/api/worlds/:worldId/cameras/:cameraId/frame", authorizeViewer, (req, res) => {
-  const frame = getFrame(req.params.worldId, req.params.cameraId);
+  const frame = getFrame(req.params.worldId, req.params.cameraId, normalizePov(req.query.pov));
   if (!frame) return res.status(404).json({ error: "No frame has been received for this camera yet" });
   res.json({ frame });
 });
 
 io.on("connection", (socket) => {
-  socket.on("viewer:join", ({ worldId, cameraId, code }, reply) => {
+  socket.on("viewer:join", ({ worldId, cameraId, code, accountToken, pov }, reply) => {
     const world = getWorld(String(worldId || ""));
     const shareCode = findShareCode(String(worldId || ""), code);
-    if (!canViewWorld(world, shareCode)) {
+    if (!canViewWorld(world, shareCode) && !canControlWorld(String(worldId || ""), accountToken)) {
       reply?.({ ok: false, error: "Not allowed to view this camera" });
       return;
     }
 
-    const room = makeRoom(world.worldId, String(cameraId || ""));
+    const normalizedPov = normalizePov(pov);
+    const room = makeRoom(world.worldId, String(cameraId || ""), normalizedPov);
     socket.join(room);
-    const latest = getFrame(world.worldId, String(cameraId || ""));
+    const latest = getFrame(world.worldId, String(cameraId || ""), normalizedPov);
     if (latest) socket.emit("camera:frame", latest);
     reply?.({ ok: true });
   });
 
-  socket.on("viewer:leave", ({ worldId, cameraId }) => {
-    socket.leave(makeRoom(String(worldId || ""), String(cameraId || "")));
+  socket.on("viewer:leave", ({ worldId, cameraId, pov }) => {
+    socket.leave(makeRoom(String(worldId || ""), String(cameraId || ""), normalizePov(pov)));
   });
 });
 
